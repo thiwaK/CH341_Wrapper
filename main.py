@@ -1,5 +1,5 @@
 import ctypes
-from ctypes import c_ulong, cast, byref, create_string_buffer, Structure
+from ctypes import c_ulong, cast, byref, Structure#,create_string_buffer
 from ctypes import POINTER, c_uint, c_bool, c_void_p, c_byte, c_char, c_char_p
 import struct
 from io import BytesIO
@@ -65,7 +65,21 @@ CH341DLL.CH341WriteRead.argtypes = [
 ]
 CH341DLL.CH341WriteRead.restype = c_bool
 
+WRITE_ENABLE = 0X06
+WRITE_DISABLE = 0X04
+READ_STATUS_REG1 = 0X05
+READ_STATUS_REG2 = 0X35
+READ_DATA = 0X03
+EWSR = 0X50
+FAST_READ = 0X0B
+PAGE_PROGRAM = 0X02
+SECTOR_ERASE_4K = 0X20
+BLOCK_ERASE_32K = 0X52
+BLOCK_ERASE_64K = 0XD8
+CHIP_ERASE = 0XC7
 
+ENABLE_4BIT_MODE = 0xB7
+DISABLE_4BIT_MODE = 0xE9
 
 class Device:
     
@@ -165,7 +179,7 @@ class Device:
     def is_spi_25_busy(self):
 
         buffer = bytes([255])
-        self.read_register_spi_25(buffer, 5);
+        self.read_register_spi_25(buffer, READ_STATUS_REG1);
 
         return buffer[0] != 255
         
@@ -192,30 +206,42 @@ class Device:
         
 
     def enable_write(self):
-        self.write_spi_341(1, 0, 1, bytes([6]))
+        self.write_spi_341(1, 0, 1, bytes([WRITE_ENABLE]))
 
     def disable_write(self):
-        self.write_spi_341(1, 0, 1, bytes([4]))
+        self.write_spi_341(1, 0, 1, bytes([WRITE_DISABLE]))
         
 
     def byte_to_hex_string(self, values):
         
-        result = ''
         hex_str = "".join([hex(x)[2:].upper() for x in values])
         if len(hex_str) % 2 > 0:
             hex_str = '0' + hex_str  # Add leading zero if the length is odd
-        result += hex_str
-        return result
+        return hex_str
         
 
     def enable_4bit_mode(self):
-        self.write_spi_341(1, 0, 1, bytes([183]))
+        self.write_spi_341(1, 0, 1, bytes([ENABLE_4BIT_MODE]))
 
     def disable_4bit_mode(self):
-        self.write_spi_341(1, 0, 1, bytes([233]))
+        self.write_spi_341(1, 0, 1, bytes([DISABLE_4BIT_MODE]))
 
 
     def read_spi_chip_id_341(self):
+
+        memory_types = {
+            0x01: "DRAM",
+            0x02: "EEPROM",
+            0x03: "Flash (NAND)",
+            0x04: "SRAM",
+            0x05: "ROM",
+            0x20: "Flash (NOR)",
+            0x30: "PCM (Phase-Change Memory)",
+            0x40: "FRAM",
+            0x50: "MRAM",
+            0x60: "ReRAM"
+        }
+
 
         self.IsRunning = True  # Set running flag
 
@@ -225,29 +251,38 @@ class Device:
 
         self.IsRunning = False
 
-        result = ''
-        for x in str_id:
-            if x == b'\xff'*len(x):
-                continue
-            result += self.byte_to_hex_string(x)
+
+        result = self.byte_to_hex_string(str_id[0])
+        maf_id, dev_type, dev_cap = result[1], result[2], result[3]
+        dev_uid = result[2:6]
 
         result = ''
-        maf_id = str_id[0]
-        for x in maf_id:
-            if x == 255:
-                continue
-            result += self.byte_to_hex_string([x])
-        maf_id = result
+        for i in range(len(str_id[1])):
+            result += self.byte_to_hex_string([str_id[1][i]])
+        dev_id = result[1]
+        if maf_id == result[0]:
+            maf_id = result[0]
 
-        result = ''
-        dev_id = str_id[1]
-        for x in dev_id:
-            if x == 255:
-                continue
-            result += self.byte_to_hex_string([x])
-        dev_id = result
+        if dev_uid != result:
+            dev_uid = result
 
-        print(f"ChipID: {dev_id}")
+        # result = ''
+        # dev_cap = str_id[2]
+        # for x in dev_cap:
+        #     result += self.byte_to_hex_string([x])
+        # dev_cap = result
+
+        # result = ''
+        # dev_type = str_id[3]
+        # for x in dev_type:
+        #     result += self.byte_to_hex_string([x])
+        # dev_type = result
+
+        # print(f"Manufacturer ID: {maf_id}")
+        # print(f"Device ID: {dev_id}")
+        # print(f"Memory Type: {dev_type}")
+        # print(f"Memory Capacity: {dev_cap}")
+        print(f"Device UID: {dev_uid}")
 
         return dev_id
 
@@ -255,32 +290,41 @@ class Device:
         
         str_id = [None] * 4
 
+        # Read Manufacturer and Device ID (JEDEC ID)
+        '''
+        https://www.jedec.org/document_search?search_api_views_fulltext=JEP106
+
+        Manufacturer ID (1 byte)
+        Memory Type (1 byte)
+        Memory Density/Capacity (1 byte)
+        '''
         buffer = bytes([159])
         self.write_spi_341(0, 0, 1, buffer);
-        buffer = bytes([0, 0, 0])
-        self.read_spi_341(1, 0, 3, buffer);
-        str_id[0] = buffer
-        # print(buffer)
+        buffer = bytes([0]*7)
+        self.read_spi_341(1, 0, 7, buffer);
+        str_id[0] = struct.unpack("7B", buffer)
         
+        #  Read Manufacturer ID and Device ID (Legacy)
         buffer = bytes([144, 0, 0, 0])
         self.write_spi_341(0, 0, 4, buffer);
         buffer = bytes([0, 0])
         self.read_spi_341(1, 0, 2, buffer);
-        str_id[1] = buffer
+        str_id[1] = struct.unpack("BB", buffer)
         # print(buffer)
 
+        # Read Manufacturer and Device ID (Alternate)
         buffer = bytes([171, 0, 0, 0])
         self.write_spi_341(0, 0, 4, buffer);
         buffer = bytes([0])
-        self.read_spi_341(1, 0, 1, buffer);
-        str_id[2] = buffer
+        self.read_spi_341(1, 0, 2, buffer);
+        str_id[2] = struct.unpack("B", buffer)
         # print(buffer)
 
         buffer = bytes([21])
         self.write_spi_341(0, 0, 1, buffer);
         buffer = bytes([0, 0])
         self.read_spi_341(1, 0, 2, buffer);
-        str_id[3] = buffer
+        str_id[3] = struct.unpack("BB", buffer)
         # print(buffer)
         
         return str_id
@@ -288,10 +332,10 @@ class Device:
 
     def read_spi_341(self, value, index, buffer_len, buffer):
 
-        buffer_pointer = ctypes.cast(buffer, c_void_p)
+        # buffer_pointer = ctypes.cast(buffer, c_void_p)
         
         Device.setD5D0(index, 41, 0)
-        Device.streamSPI4(index, 0, buffer_len, buffer_pointer)
+        Device.streamSPI4(index, 0, buffer_len, buffer)
 
         if value == 1:
             Device.setD5D0(index, 41, 1)
@@ -300,9 +344,8 @@ class Device:
 
     def write_spi_341(self, value, index, buffer_len, buffer):
 
-        ioBuffer = create_string_buffer(bytes(buffer), buffer_len)
         Device.setD5D0(index, 41, 0)
-        Device.streamSPI4(index, 0, buffer_len, ioBuffer)
+        Device.streamSPI4(index, 0, buffer_len, buffer)
         
         if value == 1:
             Device.setD5D0(index, 41, 1)
@@ -313,18 +356,16 @@ class Device:
     def read_32bit_address_spi25_341(self, address, page_size, buffer):
 
         spi_write_buffer = bytes([
-            0x03,
+            READ_DATA,
             (address & 0xFF000000) >> 24,                 # Extract and shift the most significant byte
             (address & 0x00FF0000) >> 16,                 # Extract and shift the second byte
             (address & 0x0000FF00) >> 8,                  # Extract and shift the third byte
             address & 0x000000FF                          # Extract the least significant byte
         ])
-    
-        self.write_spi_341(0, 0, len(spi_write_buffer), ctypes.cast(spi_write_buffer, c_void_p))
-        
-        buffer_pointer = ctypes.cast(buffer, c_void_p)
-        res = self.read_spi_341(1, 0, page_size, buffer_pointer)
-        print(buffer_pointer, buffer)
+
+        self.write_spi_341(0, 0, 5, spi_write_buffer)
+
+        res = self.read_spi_341(1, 0, page_size, buffer)
         return res
 
     def read_16bit_address_spi25_341(self, address, page_size, buffer):
@@ -360,20 +401,25 @@ class Device:
         Device.setDelaymS(0, 2)
 
 
-    def read_data_spi_341(self):
+    def read_data_spi_341(self, start_page=0, end_page=1):
         
         FLASH_SIZE_128BIT = 16777216;
         bytesRead = 0
-        address = 0
 
+        address = 0
         iPageSize = self.PAGE_SIZE
-        iChipSize = self.PAGE_SIZE*1
+        iChipSize = self.CHIP_SIZE
+
+        if start_page != None and end_page != None and end_page > 0:
+            address = start_page * self.PAGE_SIZE
+            iPageSize = self.PAGE_SIZE
+            iChipSize = self.PAGE_SIZE*end_page
 
         buffer = bytes([0 for x in range(self.PAGE_SIZE)])
         ms = BytesIO()
 
 
-        if (iChipSize > FLASH_SIZE_128BIT):
+        if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.enable_4bit_mode()
 
         while (address < iChipSize):
@@ -381,7 +427,7 @@ class Device:
             if (iPageSize > iChipSize - address):
                 iPageSize = iChipSize - address
 
-            if (iChipSize > FLASH_SIZE_128BIT):
+            if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
                 bytesRead += self.read_32bit_address_spi25_341(address, iPageSize, buffer)
             else:
                 bytesRead += self.read_16bit_address_spi25_341(address, iPageSize, buffer);
@@ -390,7 +436,7 @@ class Device:
 
             ms.write(buffer)
 
-        if (iChipSize > FLASH_SIZE_128BIT):
+        if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.disable_4bit_mode()
 
         result = ms.getvalue()
@@ -445,3 +491,14 @@ class Device:
         self.read_spi_341()
 
     
+device = Device()
+device.open(0)
+
+MemSize = 134217728
+
+# device.start_spi_mode_25()
+# device.read_spi_chip_id_341()
+# device.unlock_spi_chip_25()
+data = device.read_data_spi_341()
+# print(data)
+device.close()
