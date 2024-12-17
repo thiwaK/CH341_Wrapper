@@ -2,96 +2,95 @@ import ctypes
 from ctypes import c_ulong, cast, byref, Structure#,create_string_buffer
 from ctypes import POINTER, c_uint, c_bool, c_void_p, c_byte, c_char, c_char_p
 import struct
-from io import BytesIO
+from io import BytesIO, BufferedReader, SEEK_END, SEEK_SET
 
 CH341DLL = ctypes.WinDLL("CH341")
 
-CH341DLL.CH341OpenDevice.argtypes = [c_uint]
-CH341DLL.CH341OpenDevice.restype = c_void_p
 
-CH341DLL.CH341CloseDevice.argtypes = [c_uint]
-CH341DLL.CH341CloseDevice.restype = None
-
-CH341DLL.CH341GetVersion.argtypes = []
-CH341DLL.CH341GetVersion.restype = None
-
-CH341DLL.CH341GetDeviceName.argtypes = [c_ulong]
-CH341DLL.CH341GetDeviceName.restype = c_void_p 
-
-CH341DLL.CH341DriverCommand.argtypes = [c_uint, c_void_p]
-CH341DLL.CH341DriverCommand.restype = None
-
-CH341DLL.CH341SetDeviceNotify.argtypes = [c_uint, c_void_p, c_void_p]
-CH341DLL.CH341SetDeviceNotify.restype = c_uint
-
-CH341DLL.CH341WriteData.argtypes = [c_uint, c_void_p, c_void_p]
-CH341DLL.CH341WriteData.restype = c_bool
-
-CH341DLL.CH341GetVerIC.argtypes = [c_uint]
-CH341DLL.CH341GetVerIC.restype = c_uint
-
-CH341DLL.CH341SetStream.argtypes = [c_ulong, c_ulong]
-CH341DLL.CH341SetStream.restype = c_bool
-
-CH341DLL.CH341Set_D5_D0.argtypes = [c_ulong, c_ulong, c_ulong]
-CH341DLL.CH341Set_D5_D0.restype = c_bool
-
-CH341DLL.CH341SetDelaymS.argtypes = [c_uint, c_uint]
-CH341DLL.CH341SetDelaymS.restype = c_bool
-
-CH341DLL.CH341SetExclusive.argtypes = [c_uint, c_uint]
-CH341DLL.CH341SetExclusive.restype = c_bool
-
-CH341DLL.CH341StreamSPI5.argtypes = [c_uint, c_uint, c_uint, c_void_p, c_void_p]
-CH341DLL.CH341StreamSPI5.restype = c_bool
-
-CH341DLL.CH341StreamSPI4.argtypes = [c_uint, c_uint, c_uint, c_void_p]
-CH341DLL.CH341StreamSPI4.restype = c_bool
-
-CH341DLL.CH341BitStreamSPI.argtypes = [c_uint, c_uint, c_void_p]
-CH341DLL.CH341BitStreamSPI.restype = c_bool
-
-CH341DLL.CH341StreamSPI3.argtypes = [c_uint, c_uint, c_uint, c_void_p]
-CH341DLL.CH341StreamSPI3.restype = c_bool
-
-CH341DLL.CH341WriteRead.argtypes = [
-    c_ulong,                
-    c_ulong,                
-    c_void_p,               
-    c_ulong,                
-    c_ulong,                
-    POINTER(c_ulong),       
-    c_void_p                
-]
-CH341DLL.CH341WriteRead.restype = c_bool
 
 WRITE_ENABLE = 0X06
 WRITE_DISABLE = 0X04
 READ_STATUS_REG1 = 0X05
 READ_STATUS_REG2 = 0X35
-READ_DATA = 0X03
 EWSR = 0X50
 FAST_READ = 0X0B
 PAGE_PROGRAM = 0X02
+
 SECTOR_ERASE_4K = 0X20
 BLOCK_ERASE_32K = 0X52
 BLOCK_ERASE_64K = 0XD8
 CHIP_ERASE = 0XC7
 
+READ_FROM_CACHE_X4 = 0x6B
+READ_FROM_CACHE_X2 = 0x3B
+READ_FROM_CACHE = 0x0B
+READ_DATA = 0x03
+
 ENABLE_4BIT_MODE = 0xB7
 DISABLE_4BIT_MODE = 0xE9
+VENDOR_READ = 0xC0
 
-class Device:
-    
-    def __init__(self, OOB_SIZE=64, PAGE_SIZE=2048+64, BLOCK_SIZE=135168, BLOCKS_COUNT=1024):
 
-        self.PAGE_SIZE = PAGE_SIZE
-        self.BLOCK_SIZE = BLOCK_SIZE
-        self.PAGE_OOB_SIZE = OOB_SIZE
+class CH341:
 
-        self.PAGE_DATA_SIZE = PAGE_SIZE - OOB_SIZE
-        self.PAGES_PER_BLOCK = int(BLOCK_SIZE/PAGE_SIZE)
-        self.CHIP_SIZE = BLOCK_SIZE * BLOCKS_COUNT
+    CH341DLL.CH341OpenDevice.argtypes = [c_uint]
+    CH341DLL.CH341OpenDevice.restype = c_void_p
+
+    CH341DLL.CH341CloseDevice.argtypes = [c_uint]
+    CH341DLL.CH341CloseDevice.restype = None
+
+    CH341DLL.CH341GetVersion.argtypes = []
+    CH341DLL.CH341GetVersion.restype = None
+
+    CH341DLL.CH341GetDeviceName.argtypes = [c_ulong]
+    CH341DLL.CH341GetDeviceName.restype = c_void_p 
+
+    CH341DLL.CH341DriverCommand.argtypes = [c_uint, c_void_p]
+    CH341DLL.CH341DriverCommand.restype = None
+
+    CH341DLL.CH341SetDeviceNotify.argtypes = [c_uint, c_void_p, c_void_p]
+    CH341DLL.CH341SetDeviceNotify.restype = c_uint
+
+    CH341DLL.CH341WriteData.argtypes = [c_uint, c_void_p, c_void_p]
+    CH341DLL.CH341WriteData.restype = c_bool
+
+    CH341DLL.CH341GetVerIC.argtypes = [c_uint]
+    CH341DLL.CH341GetVerIC.restype = c_uint
+
+    CH341DLL.CH341SetStream.argtypes = [c_ulong, c_ulong]
+    CH341DLL.CH341SetStream.restype = c_bool
+
+    CH341DLL.CH341Set_D5_D0.argtypes = [c_ulong, c_ulong, c_ulong]
+    CH341DLL.CH341Set_D5_D0.restype = c_bool
+
+    CH341DLL.CH341SetDelaymS.argtypes = [c_uint, c_uint]
+    CH341DLL.CH341SetDelaymS.restype = c_bool
+
+    CH341DLL.CH341SetExclusive.argtypes = [c_uint, c_uint]
+    CH341DLL.CH341SetExclusive.restype = c_bool
+
+    CH341DLL.CH341StreamSPI5.argtypes = [c_uint, c_uint, c_uint, c_void_p, c_void_p]
+    CH341DLL.CH341StreamSPI5.restype = c_bool
+
+    CH341DLL.CH341StreamSPI4.argtypes = [c_uint, c_uint, c_uint, c_void_p]
+    CH341DLL.CH341StreamSPI4.restype = c_bool
+
+    CH341DLL.CH341BitStreamSPI.argtypes = [c_uint, c_uint, c_void_p]
+    CH341DLL.CH341BitStreamSPI.restype = c_bool
+
+    CH341DLL.CH341StreamSPI3.argtypes = [c_uint, c_uint, c_uint, c_void_p]
+    CH341DLL.CH341StreamSPI3.restype = c_bool
+
+    CH341DLL.CH341WriteRead.argtypes = [
+        c_ulong,                
+        c_ulong,                
+        c_void_p,               
+        c_ulong,                
+        c_ulong,                
+        c_ulong,       
+        c_void_p                
+    ]
+    CH341DLL.CH341WriteRead.restype = c_bool
 
     @staticmethod
     def setStream(iIndex, iMode):
@@ -154,24 +153,37 @@ class Device:
         if not CH341DLL.CH341SetDelaymS(c_uint(iIndex), c_uint(iDelay)):
             raise RuntimeError("CH341SetDelaymS")
 
-    @staticmethod
-    def writeRead(iIndex, iWriteLength, iWriteBuffer, iReadStep, iReadTimes, oReadLength, oReadBuffer):
-        """
-        BOOL WINAPI CH341WriteRead( // Execute data flow command, output first and then input
-        ULONG iIndex,           // Specify CH341 device serial number
-        ULONG iWriteLength,     // Write length, the length to be written
-        PVOID iWriteBuffer,     // Points to a buffer to place the data to be written.
-        ULONG iReadStep,        // The length of a single block to be read, the total length to be read is (iReadStep*iReadTimes)
-        ULONG iReadTimes,       // Number of times to prepare for reading
-        PULONG oReadLength,     // Points to the length unit, and returns the actual read length.
-        PVOID oReadBuffer );    // Points to a buffer large enough to save the read data    
-        """ 
+class Util:
 
-        if not CH341DLL.CH341WriteRead(c_ulong(iIndex), c_ulong(iWriteLength), c_void_p(iWriteBuffer), 
-            c_ulong(iReadStep), c_ulong(iReadTimes), POINTER(oReadLength), c_void_p(oReadBuffer)):
-            raise ValueError("CH341SetDelaymS")
+    def write_to(self, file_name='out.bin', data=None):
+        with open(file_name, 'wb') as f:
+            f.write(data)
 
+    def read_from(self, file_name='out.bin'):
+        with open(file_name, 'rb') as f:
+            return f.read()
 
+class Device:
+    
+    def __init__(self, OOB_SIZE=64, PAGE_SIZE=2048+64, BLOCK_SIZE=135168, BLOCKS_COUNT=1024):
+
+        self.PAGE_SIZE = PAGE_SIZE
+        self.BLOCK_SIZE = BLOCK_SIZE
+        self.PAGE_OOB_SIZE = OOB_SIZE
+
+        self.PAGE_DATA_SIZE = PAGE_SIZE - OOB_SIZE
+        self.PAGES_PER_BLOCK = int(BLOCK_SIZE/PAGE_SIZE)
+        self.CHIP_SIZE = BLOCK_SIZE * BLOCKS_COUNT
+
+        self.util = Util()
+
+    def byte_to_hex_string(self, values):
+        
+        hex_str = "".join([hex(x)[2:].upper() for x in values])
+        if len(hex_str) % 2 > 0:
+            hex_str = '0' + hex_str  # Add leading zero if the length is odd
+        return hex_str
+    
     def read_register_spi_25(self, register, operationCode=5):
         self.write_spi_341(0, 0, 1, bytes([operationCode]))
         return self.read_spi_341(1, 0, 1, register)
@@ -193,10 +205,7 @@ class Device:
         self.write_spi_341(1, 0, 1, bytes([152]))
 
         print("Unlocking...")
-        import time
-        while (self.is_spi_25_busy()):
-            # time.sleep(1)
-            pass
+        self.is_spi_25_busy()
         
         self.disable_write()
         self.stop_spi_mode_25()
@@ -210,14 +219,6 @@ class Device:
 
     def disable_write(self):
         self.write_spi_341(1, 0, 1, bytes([WRITE_DISABLE]))
-        
-
-    def byte_to_hex_string(self, values):
-        
-        hex_str = "".join([hex(x)[2:].upper() for x in values])
-        if len(hex_str) % 2 > 0:
-            hex_str = '0' + hex_str  # Add leading zero if the length is odd
-        return hex_str
         
 
     def enable_4bit_mode(self):
@@ -252,19 +253,20 @@ class Device:
         self.IsRunning = False
 
 
+
+
         result = self.byte_to_hex_string(str_id[0])
         maf_id, dev_type, dev_cap = result[1], result[2], result[3]
-        dev_uid = result[2:6]
 
-        result = ''
-        for i in range(len(str_id[1])):
-            result += self.byte_to_hex_string([str_id[1][i]])
-        dev_id = result[1]
-        if maf_id == result[0]:
-            maf_id = result[0]
+        buffer = bytes([0x9F, 0])
+        self.write_spi_341(0, 0, 2, buffer)
 
-        if dev_uid != result:
-            dev_uid = result
+        buffer = bytes([0]*3)
+        self.read_spi_341(1, 0, 3, buffer)
+        result = struct.unpack("3B", buffer)
+
+        manufacturer_id = self.byte_to_hex_string([result[0]])
+        devic_id = self.byte_to_hex_string([result[1], result[2]])
 
         # result = ''
         # dev_cap = str_id[2]
@@ -278,13 +280,13 @@ class Device:
         #     result += self.byte_to_hex_string([x])
         # dev_type = result
 
-        # print(f"Manufacturer ID: {maf_id}")
-        # print(f"Device ID: {dev_id}")
+        print(f"Manufacturer ID: {manufacturer_id}")
+        print(f"Device ID: {devic_id}")
         # print(f"Memory Type: {dev_type}")
         # print(f"Memory Capacity: {dev_cap}")
-        print(f"Device UID: {dev_uid}")
+        # print(f"Device UID: {dev_uid}")
 
-        return dev_id
+        return
 
     def read_id_spi_mode_25(self):
         
@@ -298,14 +300,14 @@ class Device:
         Memory Type (1 byte)
         Memory Density/Capacity (1 byte)
         '''
-        buffer = bytes([159])
+        buffer = bytes([0x9F])
         self.write_spi_341(0, 0, 1, buffer);
-        buffer = bytes([0]*7)
-        self.read_spi_341(1, 0, 7, buffer);
-        str_id[0] = struct.unpack("7B", buffer)
+        buffer = bytes([0]*3)
+        self.read_spi_341(1, 0, 3, buffer);
+        str_id[0] = struct.unpack("3B", buffer)
         
         #  Read Manufacturer ID and Device ID (Legacy)
-        buffer = bytes([144, 0, 0, 0])
+        buffer = bytes([0x90, 0, 0, 0])
         self.write_spi_341(0, 0, 4, buffer);
         buffer = bytes([0, 0])
         self.read_spi_341(1, 0, 2, buffer);
@@ -313,19 +315,20 @@ class Device:
         # print(buffer)
 
         # Read Manufacturer and Device ID (Alternate)
-        buffer = bytes([171, 0, 0, 0])
+        buffer = bytes([0xAB, 0, 0, 0])
         self.write_spi_341(0, 0, 4, buffer);
         buffer = bytes([0])
         self.read_spi_341(1, 0, 2, buffer);
         str_id[2] = struct.unpack("B", buffer)
         # print(buffer)
 
-        buffer = bytes([21])
+        buffer = bytes([0x15])
         self.write_spi_341(0, 0, 1, buffer);
         buffer = bytes([0, 0])
         self.read_spi_341(1, 0, 2, buffer);
         str_id[3] = struct.unpack("BB", buffer)
         # print(buffer)
+
         
         return str_id
 
@@ -334,23 +337,37 @@ class Device:
 
         # buffer_pointer = ctypes.cast(buffer, c_void_p)
         
-        Device.setD5D0(index, 41, 0)
-        Device.streamSPI4(index, 0, buffer_len, buffer)
+        CH341.setD5D0(index, 0x29, 0)
+        CH341.streamSPI4(index, 0, buffer_len, buffer)
 
         if value == 1:
-            Device.setD5D0(index, 41, 1)
+            CH341.setD5D0(index, 0x29, 1)
 
         return buffer_len
 
     def write_spi_341(self, value, index, buffer_len, buffer):
 
-        Device.setD5D0(index, 41, 0)
-        Device.streamSPI4(index, 0, buffer_len, buffer)
+        CH341.setD5D0(index, 0x29, 0)
+        CH341.streamSPI4(index, 0, buffer_len, buffer)
         
         if value == 1:
-            Device.setD5D0(index, 41, 1)
+            CH341.setD5D0(index, 0x29, 1)
         
         return buffer_len
+
+    def erase_spi_chip_25(self):
+        self.start_spi_mode_25()
+        self.enable_write()
+
+        self.write_spi_341(1, 0, 1, bytes([0x62])) # ATMEL
+        self.write_spi_341(1, 0, 1, bytes([0x60])) # SST
+        self.write_spi_341(1, 0, 1, bytes([0xC7])) # STANDARD
+
+        while (self.is_spi_25_busy()):
+            pass
+
+        self.disable_write()
+        self.stop_spi_mode_25()
 
 
     def read_32bit_address_spi25_341(self, address, page_size, buffer):
@@ -371,37 +388,52 @@ class Device:
     def read_16bit_address_spi25_341(self, address, page_size, buffer):
 
         spi_write_buffer = bytes([
-            0x03,
+            READ_DATA,
             (address & 0x00FF0000) >> 16,                 # Extract and shift the second byte
             (address & 0x0000FF00) >> 8,                  # Extract and shift the third byte
             address & 0x000000FF                          # Extract the least significant byte
         ])
     
-        self.write_spi_341(0, 0, len(spi_write_buffer), ctypes.cast(spi_write_buffer, c_void_p))
+        self.write_spi_341(0, 0, len(spi_write_buffer), spi_write_buffer)
 
-        buffer_pointer = ctypes.cast(buffer, c_void_p)
-        res = self.read_spi_341(1, 0, page_size, buffer_pointer)
-        print(buffer)
+        res = self.read_spi_341(1, 0, page_size, buffer)
 
+        return res
+
+    def write_32bit_address_spi25_341(self, address, page_size, buffer):
+        
+        spi_write_buffer = bytes([
+            PAGE_PROGRAM,
+            (address & 0xFF000000) >> 24,                 # Extract and shift the most significant byte
+            (address & 0x00FF0000) >> 16,                 # Extract and shift the second byte
+            (address & 0x0000FF00) >> 8,                  # Extract and shift the third byte
+            address & 0x000000FF                          # Extract the least significant byte
+        ])
+
+        self.write_spi_341(0, 0, 5, spi_write_buffer)
+
+        res = self.read_spi_341(1, 0, page_size, buffer)
+
+        CH341.setDelaymS(0, 2)
         return res
 
 
     def stop_spi_mode_25(self):
         
-        Device.setD5D0(0, 0, 0)
+        CH341.setD5D0(0, 0, 0)
 
     def start_spi_mode_25(self):
         
-        Device.setStream(0, 129)
-        Device.setDelaymS(0, 50)
+        CH341.setStream(0, 0x81)
+        CH341.setDelaymS(0, 0x32)
 
-        buffer = bytes([171])
+        buffer = bytes([0xAB])
         self.write_spi_341(1, 0, 1, buffer)
 
-        Device.setDelaymS(0, 2)
+        CH341.setDelaymS(0, 2)
 
 
-    def read_data_spi_341(self, start_page=0, end_page=1):
+    def read_page(self, start_page=0, end_page=1, file='out.bin'):
         
         FLASH_SIZE_128BIT = 16777216;
         bytesRead = 0
@@ -442,16 +474,85 @@ class Device:
         result = ms.getvalue()
         ms.close()
 
+        if file != None:
+            self.util.write_to(file, data=result)
         print(f"Total bytes read:", bytesRead)
         return result
+
+    def write_page(self, start_page=None, file=None, verify_write=True):
+        
+        FLASH_SIZE_128BIT = 16777216;
+        bytesWrite = 0
+
+        if start_page == None or file == None:
+            raise ValueError("Did you forgot something?")
+
+        data_stream = BytesIO(self.util.read_from(file))
+
+        data_stream.seek(0, SEEK_END)
+        iDataSize = data_stream.tell()
+        data_stream.seek(0, SEEK_SET)
             
+        address = start_page * self.PAGE_SIZE
+        iPageSize = self.PAGE_SIZE
+        iDataSize = address + iDataSize
+
+        if verify_write:
+            # print(f"reading from page {start_page} to {int(iDataSize/self.PAGE_SIZE)}")
+            before_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None)
+
+        self.enable_write()
+
+        if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
+            self.enable_4bit_mode()
+
+        print(f"Writing {iDataSize-address} bytes from address {address}")
+
+        while (address < iDataSize):
+            
+            if (iPageSize > iDataSize - address):
+                iPageSize = iDataSize - address
+
+            buffer = data_stream.read(iPageSize)
+
+            if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
+                bytesWrite += self.write_32bit_address_spi25_341(address, iPageSize, buffer)
+            
+            import time 
+            while (not self.is_spi_25_busy()):
+                print(self.is_spi_25_busy())
+                time.sleep(0.5)
+            
+
+            address += iPageSize
+            print(f"Wrote {bytesWrite} bytes. Current address {address}")
+
+        if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
+            self.disable_4bit_mode()
+
+
+        print(f"Total bytes write:", bytesWrite)
+        self.disable_write()
+
+        if verify_write:
+            # print(f"reading from page {start_page} to {int(iDataSize/self.PAGE_SIZE)}")
+            after_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None)
+
+            if before_write != after_write:
+                print("Something changed")
+            else:
+                print("Nothing changed")
+
+        return
+
+
 
     def open(self, i_index):
 
         print("="*35)
-        print(f"Chip size:", self.CHIP_SIZE, f"{int(self.CHIP_SIZE/1024/1024)}MBit")
+        print(f"Chip size :", self.CHIP_SIZE, f"{int(self.CHIP_SIZE/1024/1024)}MBit")
         print(f"Block size:", self.BLOCK_SIZE, f"({self.PAGES_PER_BLOCK} pages)")
-        print(f"Page size:", self.PAGE_SIZE, f"({self.PAGE_DATA_SIZE} + {self.PAGE_OOB_SIZE})")
+        print(f"Page size :", self.PAGE_SIZE, f"({self.PAGE_DATA_SIZE} + {self.PAGE_OOB_SIZE})")
         print("-"*35)
 
         if CH341DLL.CH341OpenDevice(c_uint(i_index)) > 0:
@@ -465,9 +566,9 @@ class Device:
             if CH341ChipVer >= 48:
                 CH341SPIBit = True
 
-                Device.setStream(i_index, 129)
-                Device.setD5D0(i_index, 63, 0)
-                Device.setDelaymS(i_index, 4)
+                CH341.setStream(i_index, 129)
+                CH341.setD5D0(i_index, 63, 0)
+                CH341.setDelaymS(i_index, 4)
 
                 # ptr = CH341DLL.CH341GetDeviceName(c_ulong(i_index))
                 # device_name = cast(ptr, c_char_p).value
@@ -486,10 +587,6 @@ class Device:
         CH341DLL.CH341CloseDevice(c_uint(0))
         print("Device disconnected")
 
-    def read_block_spi_341(self):
-
-        self.read_spi_341()
-
     
 device = Device()
 device.open(0)
@@ -499,6 +596,10 @@ MemSize = 134217728
 # device.start_spi_mode_25()
 # device.read_spi_chip_id_341()
 # device.unlock_spi_chip_25()
-data = device.read_data_spi_341()
-# print(data)
+
+# device.start_spi_mode_25()
+
+# device.write_page(0, 'out.bin')
+# device.read_page(file='out2.bin')
+
 device.close()
