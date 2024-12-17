@@ -3,6 +3,10 @@ from ctypes import c_ulong, cast, byref, Structure#,create_string_buffer
 from ctypes import POINTER, c_uint, c_bool, c_void_p, c_byte, c_char, c_char_p
 import struct
 from io import BytesIO, BufferedReader, SEEK_END, SEEK_SET
+import time
+import zlib
+
+
 
 CH341DLL = ctypes.WinDLL("CH341")
 
@@ -13,7 +17,6 @@ WRITE_DISABLE = 0X04
 READ_STATUS_REG1 = 0X05
 READ_STATUS_REG2 = 0X35
 EWSR = 0X50
-FAST_READ = 0X0B
 PAGE_PROGRAM = 0X02
 
 SECTOR_ERASE_4K = 0X20
@@ -24,11 +27,28 @@ CHIP_ERASE = 0XC7
 READ_FROM_CACHE_X4 = 0x6B
 READ_FROM_CACHE_X2 = 0x3B
 READ_FROM_CACHE = 0x0B
-READ_DATA = 0x03
+READ_DATA = 3
 
-ENABLE_4BIT_MODE = 0xB7
-DISABLE_4BIT_MODE = 0xE9
+ENABLE_4BIT_MODE = 183
+DISABLE_4BIT_MODE = 233
 VENDOR_READ = 0xC0
+
+SPEED_LOW = 0b00000000 #  20KHz
+SPEED_STANDARD = 0b01000000 # 100KHz
+SPEED_FAST = 0b10000000 # 400KHz
+SPEED_HIGH = 0b11000000 # 750KHz
+SPI_IO_SINGLE = 0b00000000 # single input and single output
+SPI_IO_DOUBLE = 0b00100000 # double input and double output
+SPI_BIT_ORDER_LITTLE = 0b00000000 # little-endian (Low end first)
+SPI_BIT_ORDER_BIG = 0b00000001 # big-endian (High end first)
+
+"""
+0x29, 1 - 00101001
+0x29, 0 - 00101001
+0x00, 0 - 
+0x3F, 0 - 00111111
+
+"""
 
 
 class CH341:
@@ -162,6 +182,33 @@ class Util:
     def read_from(self, file_name='out.bin'):
         with open(file_name, 'rb') as f:
             return f.read()
+
+    def convert_size(self, byte_size):
+        if byte_size < 1024:
+            return f"{byte_size} Bytes"
+        elif byte_size < 1024**2:
+            kb_size = byte_size / 1024
+            return f"{kb_size:.2f} KB"
+        elif byte_size < 1024**3:
+            mb_size = byte_size / 1024**2
+            return f"{mb_size:.2f} MB"
+        else:
+            gb_size = byte_size / 1024**3
+            return f"{gb_size:.2f} GB"
+
+    def format_time(self, milliseconds):
+        minutes = milliseconds // 60000  # 1 minute = 60,000 milliseconds
+        seconds = (milliseconds % 60000) // 1000  # Remaining seconds
+        millis = milliseconds % 1000  # Remaining milliseconds
+
+        if minutes > 0:
+            return f"{minutes:.0f}m:{seconds:.0f}s:{millis:.0f}mi"
+        elif seconds > 0:
+            return f"{seconds:.0f}s:{millis:.0f}mi"
+        else:
+            return f"{millis:.1f}mi"
+
+
 
 class Device:
     
@@ -337,21 +384,23 @@ class Device:
 
         # buffer_pointer = ctypes.cast(buffer, c_void_p)
         
-        CH341.setD5D0(index, 0x29, 0)
+        CH341.setD5D0(index, 63, 0)
         CH341.streamSPI4(index, 0, buffer_len, buffer)
+        print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
+
 
         if value == 1:
-            CH341.setD5D0(index, 0x29, 1)
+            CH341.setD5D0(index, 63, 1)
 
         return buffer_len
 
     def write_spi_341(self, value, index, buffer_len, buffer):
 
-        CH341.setD5D0(index, 0x29, 0)
+        CH341.setD5D0(index, 41, 0)
         CH341.streamSPI4(index, 0, buffer_len, buffer)
         
         if value == 1:
-            CH341.setD5D0(index, 0x29, 1)
+            CH341.setD5D0(index, 41, 1)
         
         return buffer_len
 
@@ -372,13 +421,25 @@ class Device:
 
     def read_32bit_address_spi25_341(self, address, page_size, buffer):
 
-        spi_write_buffer = bytes([
-            READ_DATA,
-            (address & 0xFF000000) >> 24,                 # Extract and shift the most significant byte
-            (address & 0x00FF0000) >> 16,                 # Extract and shift the second byte
-            (address & 0x0000FF00) >> 8,                  # Extract and shift the third byte
-            address & 0x000000FF                          # Extract the least significant byte
-        ])
+        """
+        addr      com
+        00000000  03000000
+        00000840  03000840
+        00001080  03001080
+        000018C0  030018C0
+        ...
+        0000B580  0300B580
+        """
+        
+        
+        # Ensure the address is in the correct byte order (Big Endian format)
+        byte_1 = (address >> 24) & 0xFF  # Most significant byte
+        byte_2 = (address >> 16) & 0xFF  # Second byte
+        byte_3 = (address >> 8) & 0xFF   # Third byte
+        byte_4 = address & 0xFF          # Least significant byte
+        
+        print(f"Extracted bytes: {byte_1:02X} {byte_2:02X} {byte_3:02X} {byte_4:02X}")
+        spi_write_buffer = bytes([READ_DATA, byte_1, byte_2, byte_3, byte_4])
 
         self.write_spi_341(0, 0, 5, spi_write_buffer)
 
@@ -401,7 +462,7 @@ class Device:
         return res
 
     def write_32bit_address_spi25_341(self, address, page_size, buffer):
-        
+        # print(f"Writing {hex(address)} to {hex(address + page_size)}")
         spi_write_buffer = bytes([
             PAGE_PROGRAM,
             (address & 0xFF000000) >> 24,                 # Extract and shift the most significant byte
@@ -424,7 +485,7 @@ class Device:
 
     def start_spi_mode_25(self):
         
-        CH341.setStream(0, 0x81)
+        CH341.setStream(0, 0x80)
         CH341.setDelaymS(0, 0x32)
 
         buffer = bytes([0xAB])
@@ -433,7 +494,7 @@ class Device:
         CH341.setDelaymS(0, 2)
 
 
-    def read_page(self, start_page=0, end_page=1, file='out.bin'):
+    def read_page(self, start_page=0, end_page=1, file='out.bin', verbouse=True):
         
         FLASH_SIZE_128BIT = 16777216;
         bytesRead = 0
@@ -445,16 +506,22 @@ class Device:
         if start_page != None and end_page != None and end_page > 0:
             address = start_page * self.PAGE_SIZE
             iPageSize = self.PAGE_SIZE
-            iChipSize = self.PAGE_SIZE*end_page
+            iChipSize = end_page * self.PAGE_SIZE
 
-        buffer = bytes([0 for x in range(self.PAGE_SIZE)])
+        
         ms = BytesIO()
 
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.enable_4bit_mode()
 
+        if verbouse:
+            print(f"Reading from page {start_page} to {end_page}")
+            print(f"Reading time: {self.util.format_time(self.page_time_ms*(end_page - start_page))}")
+
         while (address < iChipSize):
+
+            buffer = bytes([0 for x in range(self.PAGE_SIZE)])
             
             if (iPageSize > iChipSize - address):
                 iPageSize = iChipSize - address
@@ -463,10 +530,13 @@ class Device:
                 bytesRead += self.read_32bit_address_spi25_341(address, iPageSize, buffer)
             else:
                 bytesRead += self.read_16bit_address_spi25_341(address, iPageSize, buffer);
-                
-            address += iPageSize;
-
+            
             ms.write(buffer)
+            address += iPageSize
+
+            del buffer
+
+            
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.disable_4bit_mode()
@@ -476,7 +546,9 @@ class Device:
 
         if file != None:
             self.util.write_to(file, data=result)
-        print(f"Total bytes read:", bytesRead)
+        if verbouse: 
+            print(f"Total bytes read:", bytesRead, self.util.convert_size(bytesRead))
+            print(f"Total data bytes:", bytesRead - ((bytesRead//self.PAGE_SIZE)*self.PAGE_OOB_SIZE), self.util.convert_size(bytesRead - ((bytesRead//self.PAGE_SIZE)*self.PAGE_OOB_SIZE)))
         return result
 
     def write_page(self, start_page=None, file=None, verify_write=True):
@@ -499,14 +571,14 @@ class Device:
 
         if verify_write:
             # print(f"reading from page {start_page} to {int(iDataSize/self.PAGE_SIZE)}")
-            before_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None)
+            before_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None, False)
 
         self.enable_write()
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.enable_4bit_mode()
 
-        print(f"Writing {iDataSize-address} bytes from address {address}")
+        print(f"Start writing {iDataSize-address} bytes from address {address}")
 
         while (address < iDataSize):
             
@@ -518,14 +590,13 @@ class Device:
             if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
                 bytesWrite += self.write_32bit_address_spi25_341(address, iPageSize, buffer)
             
-            import time 
-            while (not self.is_spi_25_busy()):
+            while (self.is_spi_25_busy()):
                 print(self.is_spi_25_busy())
                 time.sleep(0.5)
             
 
             address += iPageSize
-            print(f"Wrote {bytesWrite} bytes. Current address {address}")
+            # print(f"Wrote {bytesWrite} bytes. Current address {address}")
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.disable_4bit_mode()
@@ -536,7 +607,7 @@ class Device:
 
         if verify_write:
             # print(f"reading from page {start_page} to {int(iDataSize/self.PAGE_SIZE)}")
-            after_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None)
+            after_write = self.read_page(start_page, int(iDataSize/self.PAGE_SIZE), None, False)
 
             if before_write != after_write:
                 print("Something changed")
@@ -546,8 +617,50 @@ class Device:
         return
 
 
+    def read_bytes(self, from_offset, to_offset, exclude_oob=True, out=None):
 
-    def open(self, i_index):
+        start_page, end_page = None, None
+        if exclude_oob:
+            start_page = from_offset // self.PAGE_DATA_SIZE
+            end_page = (from_offset + to_offset) // self.PAGE_DATA_SIZE
+        else:
+            start_page = from_offset // self.PAGE_SIZE
+            end_page = (from_offset + to_offset) // self.PAGE_SIZE
+
+        return self.read_page(start_page, end_page, out)
+
+    def write_bytes(self, from_offset, file=None, exclude_oob=True):
+
+        start_page, end_page = None, None
+        if exclude_oob:
+            start_page = from_offset // self.PAGE_DATA_SIZE
+        else:
+            start_page = from_offset // self.PAGE_SIZE
+
+        return self.write_page(start_page, file)
+
+
+    def read_flash_bytes(self):
+
+        buffer = bytes([32, 00, 00, 00, 00])
+        self.write_spi_341(0, 0, 5, buffer);
+
+        buffer = bytes([0]*2112)
+        self.read_spi_341(1, 0, 2112, buffer);
+
+        print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
+
+        buffer = bytes([32, 00, 00, 0x08, 0x40])
+        self.write_spi_341(0, 0, 5, buffer);
+
+        buffer = bytes([0]*2112)
+        self.read_spi_341(1, 0, 2112, buffer);
+
+        print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
+
+
+
+    def open(self, i_index, speed=SPEED_HIGH, spi_io=SPI_IO_SINGLE, spi_bit_order=SPI_BIT_ORDER_BIG):
 
         print("="*35)
         print(f"Chip size :", self.CHIP_SIZE, f"{int(self.CHIP_SIZE/1024/1024)}MBit")
@@ -577,6 +690,14 @@ class Device:
                 print(f"DLL Version: {CH341DLL.CH341GetVersion()}")
                 print(f"Driver Version: {CH341DLL.CH341GetDrvVersion()}")
                 self.read_spi_chip_id_341()
+
+                t_start = time.time_ns()
+                self.read_page(0, 10, None, False)
+                t_end = time.time_ns()
+                elapsed_time_ns = t_end - t_start
+                self.page_time_ms = (elapsed_time_ns / 1e6)/10
+                print(f"Page time: {self.page_time_ms:.1f} ms")
+
                 print("-"*35)
                 
             return True
@@ -584,12 +705,26 @@ class Device:
             raise RuntimeError("Failed to open the device.")
 
     def close(self):
+        print("-"*35)
         CH341DLL.CH341CloseDevice(c_uint(0))
         print("Device disconnected")
 
+    """
+    CH341StreamSPI4
+    The parameter iChipSelect should be set to 0 if CS is not used. 
+    Otherwise 0x80 if D0 is CS, 0x81 for D1 or 0x82 for D2.
     
-device = Device()
-device.open(0)
+    CH341SetStream
+    Setting bit 2 of iMode to 1 enables the second SPI port. 
+    D3 remains the common clock source, but D4 and D6 are additional data I/O lines. 
+    If your hardware is MiniProgrammer, D4 and D6 are not connected to anything. 
+    Bit 7 configures endianness. 
+    Basically, for the MiniProgrammer this is the only bit you have to configure, therefore iMode can be 0x80 or 0x00.
+    """
+
+        
+device = Device(BLOCKS_COUNT=1024)
+device.open(0, spi_io=SPI_IO_DOUBLE)
 
 MemSize = 134217728
 
@@ -597,9 +732,19 @@ MemSize = 134217728
 # device.read_spi_chip_id_341()
 # device.unlock_spi_chip_25()
 
-# device.start_spi_mode_25()
+
+device.read_flash_bytes()
 
 # device.write_page(0, 'out.bin')
-# device.read_page(file='out2.bin')
+# device.read_page(0, 2, None)
 
+# device.start_spi_mode_25()
+# device.read_bytes(0, 1024*128, True, 'zloader')
+# device.read_bytes(1024*128, 1024*1024, True, 'uboot')
+# device.read_bytes(1024*128 + 1024*1024, 1024*1024, True, 'uboot_mirr')
+
+# device.write_bytes(1024*128, 'uboot')
+
+# data = device.read_page(0, 1, None)
+# print(data, len(data))
 device.close()
