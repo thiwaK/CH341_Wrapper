@@ -1,14 +1,11 @@
-import ctypes
-from ctypes import c_ulong, cast, byref, Structure#,create_string_buffer
-from ctypes import POINTER, c_uint, c_bool, c_void_p, c_byte, c_char, c_char_p
+# import ctypes
+# from ctypes import *
 import struct
 from io import BytesIO, BufferedReader, SEEK_END, SEEK_SET
 import time
 import zlib
 
-
-
-CH341DLL = ctypes.WinDLL("CH341")
+from src.CH341 import *
 
 
 
@@ -31,12 +28,10 @@ READ_DATA = 3
 
 ENABLE_4BIT_MODE = 183
 DISABLE_4BIT_MODE = 233
-VENDOR_READ = 0xC0
 
-SPEED_LOW = 0b00000000 #  20KHz
-SPEED_STANDARD = 0b01000000 # 100KHz
-SPEED_FAST = 0b10000000 # 400KHz
-SPEED_HIGH = 0b11000000 # 750KHz
+VENDOR_READ = 0xC0   # CH341 manufacturer-specific read operation implemented through control transmission
+VENDOR_WRITE = 0x40  # CH341 manufacturer-specific write operation implemented through control transmission
+
 SPI_IO_SINGLE = 0b00000000 # single input and single output
 SPI_IO_DOUBLE = 0b00100000 # double input and double output
 SPI_BIT_ORDER_LITTLE = 0b00000000 # little-endian (Low end first)
@@ -50,128 +45,9 @@ SPI_BIT_ORDER_BIG = 0b00000001 # big-endian (High end first)
 
 """
 
+class Error:
 
-class CH341:
-
-    CH341DLL.CH341OpenDevice.argtypes = [c_uint]
-    CH341DLL.CH341OpenDevice.restype = c_void_p
-
-    CH341DLL.CH341CloseDevice.argtypes = [c_uint]
-    CH341DLL.CH341CloseDevice.restype = None
-
-    CH341DLL.CH341GetVersion.argtypes = []
-    CH341DLL.CH341GetVersion.restype = None
-
-    CH341DLL.CH341GetDeviceName.argtypes = [c_ulong]
-    CH341DLL.CH341GetDeviceName.restype = c_void_p 
-
-    CH341DLL.CH341DriverCommand.argtypes = [c_uint, c_void_p]
-    CH341DLL.CH341DriverCommand.restype = None
-
-    CH341DLL.CH341SetDeviceNotify.argtypes = [c_uint, c_void_p, c_void_p]
-    CH341DLL.CH341SetDeviceNotify.restype = c_uint
-
-    CH341DLL.CH341WriteData.argtypes = [c_uint, c_void_p, c_void_p]
-    CH341DLL.CH341WriteData.restype = c_bool
-
-    CH341DLL.CH341GetVerIC.argtypes = [c_uint]
-    CH341DLL.CH341GetVerIC.restype = c_uint
-
-    CH341DLL.CH341SetStream.argtypes = [c_ulong, c_ulong]
-    CH341DLL.CH341SetStream.restype = c_bool
-
-    CH341DLL.CH341Set_D5_D0.argtypes = [c_ulong, c_ulong, c_ulong]
-    CH341DLL.CH341Set_D5_D0.restype = c_bool
-
-    CH341DLL.CH341SetDelaymS.argtypes = [c_uint, c_uint]
-    CH341DLL.CH341SetDelaymS.restype = c_bool
-
-    CH341DLL.CH341SetExclusive.argtypes = [c_uint, c_uint]
-    CH341DLL.CH341SetExclusive.restype = c_bool
-
-    CH341DLL.CH341StreamSPI5.argtypes = [c_uint, c_uint, c_uint, c_void_p, c_void_p]
-    CH341DLL.CH341StreamSPI5.restype = c_bool
-
-    CH341DLL.CH341StreamSPI4.argtypes = [c_uint, c_uint, c_uint, c_void_p]
-    CH341DLL.CH341StreamSPI4.restype = c_bool
-
-    CH341DLL.CH341BitStreamSPI.argtypes = [c_uint, c_uint, c_void_p]
-    CH341DLL.CH341BitStreamSPI.restype = c_bool
-
-    CH341DLL.CH341StreamSPI3.argtypes = [c_uint, c_uint, c_uint, c_void_p]
-    CH341DLL.CH341StreamSPI3.restype = c_bool
-
-    CH341DLL.CH341WriteRead.argtypes = [
-        c_ulong,                
-        c_ulong,                
-        c_void_p,               
-        c_ulong,                
-        c_ulong,                
-        c_ulong,       
-        c_void_p                
-    ]
-    CH341DLL.CH341WriteRead.restype = c_bool
-
-    @staticmethod
-    def setStream(iIndex, iMode):
-        """
-        BOOL WINAPI CH341SetStream( // Set the serial port stream mode
-        ULONG iIndex,           // Specify CH341 device serial number
-        ULONG iMode );          // Specify mode
-
-        Mode:
-         Bit 1-Bit 0: I2C interface speed/SCL frequency
-            00=low speed/20KHz
-            01=standard/100KHz (default value)
-            10=fast/400KHz
-            11=high speed/750KHz
-         Bit 2: SPI I/O number/IO pin
-            0=single input and single output (D3 clock/D5 output/D7 input) (default value)
-            1=double input and double output (D3 clock/D5 output D4 Out/D7 in D6 in)
-         Bit 7: Bit order in SPI byte
-            0=low end first
-            1=high end first
-         
-         Other bits reserved, must be 0
-        """
-        if not CH341DLL.CH341SetStream(c_ulong(iIndex), c_ulong(iMode)):
-            raise RuntimeError("CH341SetStream")
-
-    @staticmethod
-    def setD5D0(iIndex, iSetDirOut, iSetDataOut):
-        """
-        BOOL    WINAPI  CH341Set_D5_D0(  // Set the I/O direction of the D5-D0 pin of CH341, and directly output data through the D5-D0 pin of CH341, which is more efficient than CH341SetOutput
-        /* ***** Use this API with caution to prevent changing the I/O direction to change the input pin into an output pin, resulting in a short circuit with other output pins and damaging the chip ***** */
-            ULONG           iIndex,  // Specify CH341 device serial number
-            ULONG           iSetDirOut,  // Set the I/O direction of each pin of D5-D0. If a certain bit is cleared to 0, the corresponding pin is input, and if a certain bit is set to 1, the corresponding pin is output. The default value in parallel port mode is 0x00, all input
-            ULONG           iSetDataOut );  // Set the output data of each pin of D5-D0. If the I/O direction is output, then when a certain bit is cleared to 0, the corresponding pin outputs a low level, and when a certain bit is set to 1, the corresponding pin outputs a high level.
-        // Bit 5-bit 0 of the above data correspond to the D5-D0 pins of CH341 respectively.
-        """ 
-        if not CH341DLL.CH341Set_D5_D0(c_ulong(iIndex), c_ulong(iSetDirOut), c_ulong(iSetDataOut)):
-            raise RuntimeError("CH341Set_D5_D0")
-
-    @staticmethod
-    def streamSPI4(iIndex, iChipSelect, iLength, ioBuffer):
-        """
-        BOOL    WINAPI  CH341StreamSPI4(  // Process SPI data stream, 4-wire interface, the clock line is DCK/D3 pin, the output data line is DOUT/D5 pin, the input data line is DIN/D7 pin, and the chip select line is D0/ D1/D2, speed is about 68K bytes
-        /* SPI timing: The DCK/D3 pin is the clock output, which defaults to low level. The DOUT/D5 pin outputs during the low level before the rising edge of the clock. The DIN/D7 pin outputs the high level before the falling edge of the clock. Enter during normal times */
-        ULONG           iIndex,  // Specify CH341 device serial number
-        ULONG           iChipSelect,  // Chip select control, if bit 7 is 0, the chip select control is ignored, if bit 7 is 1, the parameters are valid: Bit 1 and bit 0 are 00/01/10, respectively, select the D0/D1/D2 pin as low level. valid chip select
-        ULONG           iLength,  // Number of data bytes to be transmitted
-        PVOID           ioBuffer );  // Point to a buffer, place the data to be written from DOUT, and return the data read from DIN
-        """
-        if not CH341DLL.CH341StreamSPI4(c_ulong(iIndex), c_ulong(iChipSelect), c_ulong(iLength), ioBuffer):
-            raise RuntimeError("CH341StreamSPI4")
-
-    @staticmethod
-    def setDelaymS(iIndex, iDelay):
-        """
-        BOOL WINAPI CH341SetDelaymS(    // Set the hardware asynchronous delay, return soon after the call, and delay the specified number of milliseconds before the next stream operation
-        ULONG iIndex,               //Specify CH341 device serial number
-        ULONG iDelay );             //Specify the number of milliseconds of delay   
-        """
-        if not CH341DLL.CH341SetDelaymS(c_uint(iIndex), c_uint(iDelay)):
-            raise RuntimeError("CH341SetDelaymS")
+    DEV_NOT_OPEN = "Device not open. Try open_device first."
 
 class Util:
 
@@ -209,6 +85,16 @@ class Util:
             return f"{millis:.1f}mi"
 
 
+WT_PAGE = 0
+WT_SSTB = 1
+WT_SSTW = 2
+
+class MEMORY_ID:
+    def __init__(self):
+        self.ID9FH = [0, 0, 0]
+        self.ID90H = [0, 0]
+        self.IDABH = 0
+        self.ID15H = [0, 0]
 
 class Device:
     
@@ -222,7 +108,266 @@ class Device:
         self.PAGES_PER_BLOCK = int(BLOCK_SIZE/PAGE_SIZE)
         self.CHIP_SIZE = BLOCK_SIZE * BLOCKS_COUNT
 
+        self.dev_open = False
+        self.dev_index = 0
+
         self.util = Util()
+        self.ID = MEMORY_ID()
+
+    def spi_init(self):
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+        
+        CH341.setStream(self.dev_index, 129)
+        CH341.setD5D0(self.dev_index, 0x29, 0)
+
+    def spi_deinit(self):
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+        CH341.setD5D0(self.dev_index, 0, 0)
+
+
+    def spi_read(self, cs: int, buffer_len: int, buffer: list[int]) -> int:
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+        if cs == 1:
+            if not CH341.streamSPI4(self.dev_index, 0x80, buffer_len, buffer):
+                return -1
+            return buffer_len
+        else:
+            CH341.setD5D0(self.dev_index, 0x29, 0)
+            if CH341.streamSPI4(self.dev_index, 0, buffer_len, buffer):
+                return -1
+            return buffer_len
+
+    def spi_write(self, cs: int, buffer_len: int, buffer: list[int]) -> int:
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+        if cs == 1:
+            if not CH341.streamSPI4(self.dev_index, 128, buffer_len, buffer): #128=0x80
+                return -1
+            return buffer_len
+        else:
+            CH341.setD5D0(self.dev_index, 0x29, 0)  # Manually toggle CS
+            if not CH341.streamSPI4(self.dev_index, 0, buffer_len, buffer):
+                return -1
+            return buffer_len
+
+
+    def UsbAsp25_ReadID(self, ID):
+        
+
+        # 9F command
+        buffer = create_string_buffer(4)
+        buffer[0] = 0x9F
+        
+        self.SPIWrite(0, 1, buffer)
+        buffer = bytearray([0xFF, 0xFF, 0xFF, 0xFF])
+        pointer = cast(create_string_buffer(buffer), POINTER(ctypes.c_byte))
+        self.SPIRead(1, 3, buffer)
+        ID.ID9FH = buffer[:3]
+
+        print(buffer)
+        
+        # 90 command
+        buffer = bytes([0x90, 0, 0, 0])
+        self.SPIWrite(0, 4, buffer)
+        result = self.SPIRead(1, 2, buffer)
+        ID.ID90H = buffer[:2]
+        
+        # AB command
+        buffer = bytes([0, 0, 0, 0])
+        buffer[0] = 0xAB
+        SPIWrite(0, 4, buffer)
+        result = SPIRead(1, 1, buffer)
+        ID.IDABH = buffer[0]
+        
+        # 15 command
+        buffer[0] = 0x15
+        SPIWrite(0, 1, buffer)
+        buffer = [0xFF, 0xFF]
+        result = SPIRead(1, 2, buffer)
+        ID.ID15H = buffer[:2]
+
+    def UsbAsp25_ReadSR(self, sreg, opcode=0x05):
+        self.SPIWrite(0, 1, bytes([opcode]))
+        return self.SPIRead(1, 1, sreg)
+
+    def __UsbAsp25_WriteSR__(self, sreg, opcode=0x01):
+        buff = bytes([0x50])
+        self.SPIWrite(1, 1, buff)
+        buff = bytes([opcode, sreg])
+        return self.SPIWrite(1, 2, buff)
+
+    def __UsbAsp25_WriteSR_2byte__(self, sreg1, sreg2):
+        buff = bytes([0x50])
+        self.SPIWrite(1, 1, buff)
+        buff = bytes([0x01, sreg1, sreg2])
+        return self.SPIWrite(1, 3, buff)
+
+
+    def UsbAsp25_Read32bitAddr(self, Opcode, Addr, buffer, bufflen):
+
+        byte_1 = (Addr >> 24) & 0xFF  # Most significant byte
+        byte_2 = (Addr >> 16) & 0xFF  # Second byte
+        byte_3 = (Addr >> 8) & 0xFF   # Third byte
+        byte_4 = Addr & 0xFF          # Least significant byte
+
+        # byte_1 = (Addr >> 8) & 0xFF  # Most significant byte
+        # byte_2 = (Addr >> 0xFF00) & 8  # Second byte
+        # byte_3 = (Addr >> 0) & 0xFF   # Third byte
+        # byte_4 = Addr & 0xFF          # Least significant byte
+        
+        print(f"Extracted bytes: {Opcode:02X} {byte_1:02X} {byte_2:02X} {byte_3:02X} {byte_4:02X}")
+        addr_buffer = bytes([Opcode, byte_1, byte_2, byte_3, byte_4])
+
+        self.SPIWrite(0, 5, addr_buffer)
+        return self.SPIRead(1, bufflen, buffer)
+
+    def UsbAsp25_Write32bitAddr(self, Opcode, Addr, buffer, bufflen):
+        buff = bytes([
+                    Opcode,
+                    (Addr >> 24) & 0xFF,
+                    (Addr >> 16) & 0xFF,
+                    (Addr >> 8) & 0xFF,
+                    Addr & 0xFF
+                ])
+        self.SPIWrite(0, 5, buff)
+        return self.SPIWrite(1, bufflen, buffer)
+
+
+    def UsbAsp25_Read(self, Opcode, Addr, buffer, bufflen):
+        buff = bytes([Opcode, (Addr >> 8) & 0xFF, (Addr >> 16) & 0xFF, Addr & 0xFF])
+        self.SPIWrite(0, 4, buff)
+        x = self.SPIRead(1, bufflen, buffer)
+        print(zlib.crc32(x))
+        return x
+
+    def UsbAsp25_Write(self, Opcode, Addr, buffer, bufflen):
+        buff = bytes([Opcode, (Addr >> 8) & 0xFF, (Addr >> 16) & 0xFF, Addr & 0xFF])
+        self.SPIWrite(0, 4, buff)
+        return self.SPIWrite(1, bufflen, buffer)
+
+    ###
+    def UsbAsp25_Busy(self):
+        sreg = bytes([255])
+        self.UsbAsp25_ReadSR(sreg)
+        return (int(sreg[0]) & 0x01) != 0
+
+
+    def EnterProgMode25(self, spiSpeed, SendAB=False):
+        
+        self.spi_init()
+        time.sleep(0.05)
+
+        if SendAB:
+            self.SPIWrite(1, 1, bytes([0xAB]))
+        time.sleep(0.002)
+
+    def ExitProgMode25(self):
+        self.spi_deinit()
+
+
+    def UsbAsp25_Wren(self):
+        buff = bytes([0x06])
+        return self.SPIWrite(1, 1, buff)
+
+    def UsbAsp25_Wrdi(self):
+        buff = bytes([0x04])
+        return self.SPIWrite(1, 1, buff)
+
+    def UsbAsp25_ChipErase(self):
+        buff = bytes([0x62])
+        self.SPIWrite(1, 1, buff)
+        buff = bytes([0x60])
+        self.SPIWrite(1, 1, buff)
+        buff = bytes([0xC7])
+        return self.SPIWrite(1, 1, buff)
+
+
+
+    def UsbAsp25_WriteSSTB(self, Opcode, Data):
+        buff = bytes([Opcode, Data])
+        return self.SPIWrite(1, 2, buff) - 1
+
+    def UsbAsp25_WriteSSTW(self, Opcode, Data1, Data2):
+        buff = bytes([Opcode, Data1, Data2])
+        return self.SPIWrite(1, 3, buff) - 1
+
+    def UsbAsp25_EN4B(self):
+        self.UsbAsp25_Wren()
+        buff = bytes([0xB7])
+        self.SPIWrite(1, 1, buff)
+        
+        # Access Spansion Bank Register
+        buff = bytes([0x17])
+        self.SPIWrite(0, 1, buff)
+        buff = bytes([0x80]) # EXTADD=1
+        return self.SPIWrite(1, 1, buff)
+
+    def UsbAsp25_EX4B(self):
+        self.UsbAsp25_Wren()
+        buff = bytes([0xE9])
+        return self.SPIWrite(1, 1, buff)
+
+
+    def SPIRead(self, CS: int, BufferLen: int, buffer: bytes):
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+
+        # print("")
+        # while self.UsbAsp25_Busy():
+        #     time.sleep(0.1)
+        #     print(".", end='')
+
+        if(CS == 1):
+            if not CH341.streamSPI4(self.dev_index, 0x80, BufferLen, buffer):
+                print("FAILED")
+                return -1 
+            print("cs:1", zlib.crc32(buffer))
+            return BufferLen
+        else:
+            CH341.setD5D0(self.dev_index, 0x29, 0)
+            if not CH341.streamSPI4(self.dev_index, 0, BufferLen, buffer):
+                print("FAILED")
+                return -1
+            print("cs:0", zlib.crc32(buffer))
+            return BufferLen
+
+    def SPIWrite(self, CS: int, BufferLen: int, buffer: bytes):
+        if not self.dev_open:
+            raise RuntimeError(Error.DEV_NOT_OPEN)
+
+        if(CS == 1):
+            if not CH341.streamSPI4(self.dev_index, 0x80, BufferLen, buffer):
+                return -1 
+            return BufferLen
+        else:
+            CH341.setD5D0(self.dev_index, 0x29, 0)
+            if not CH341.streamSPI4(self.dev_index, 0, BufferLen, buffer):
+                return -1 
+            return BufferLen
+
+    def IsLockBitsEnabled(self):
+        result = False
+        sreg = bytes([0])
+        sreg2 = bytes([0])
+        sreg3 = bytes([0])
+
+        self.UsbAsp25_ReadSR(sreg); #Читаем регистр
+        self.UsbAsp25_ReadSR(sreg2, 0x35); #Второй байт
+        self.UsbAsp25_ReadSR(sreg3, 0x15); #Третий байт
+        print(sreg, sreg2, sreg3)
+        # print(f"Sreg: {bin(sreg)[2:].zfill(8)}(0x{hex(sreg)[2:].zfill(2)}), "
+        #   f"{bin(sreg2)[2:].zfill(8)}(0x{hex(sreg2)[2:].zfill(2)}), "
+        #   f"{bin(sreg3)[2:].zfill(8)}(0x{hex(sreg3)[2:].zfill(2)})")
+
+
+
+
+        return result
+
+
 
     def byte_to_hex_string(self, values):
         
@@ -384,23 +529,23 @@ class Device:
 
         # buffer_pointer = ctypes.cast(buffer, c_void_p)
         
-        CH341.setD5D0(index, 63, 0)
+        CH341.setD5D0(index, 0x29, 0)
         CH341.streamSPI4(index, 0, buffer_len, buffer)
-        print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
+
+        # print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
 
 
         if value == 1:
-            CH341.setD5D0(index, 63, 1)
-
+            CH341.setD5D0(self.dev_index, 0x29, 1)
         return buffer_len
 
     def write_spi_341(self, value, index, buffer_len, buffer):
 
-        CH341.setD5D0(index, 41, 0)
+        CH341.setD5D0(index, 0x29, 0)
         CH341.streamSPI4(index, 0, buffer_len, buffer)
         
         if value == 1:
-            CH341.setD5D0(index, 41, 1)
+            CH341.setD5D0(index, 0x29, 1)
         
         return buffer_len
 
@@ -500,26 +645,27 @@ class Device:
         bytesRead = 0
 
         address = 0
-        iPageSize = self.PAGE_SIZE
+        iPageSize = self.PAGE_DATA_SIZE
         iChipSize = self.CHIP_SIZE
 
         if start_page != None and end_page != None and end_page > 0:
-            address = start_page * self.PAGE_SIZE
-            iPageSize = self.PAGE_SIZE
-            iChipSize = end_page * self.PAGE_SIZE
+            address = start_page * iPageSize
+            iChipSize = end_page * iPageSize
 
         
         ms = BytesIO()
 
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
-            self.enable_4bit_mode()
+            self.UsbAsp25_EN4B()
 
         if verbouse:
             print(f"Reading from page {start_page} to {end_page}")
             print(f"Reading time: {self.util.format_time(self.page_time_ms*(end_page - start_page))}")
 
         while (address < iChipSize):
+
+            time.sleep(0.1)
 
             buffer = bytes([0 for x in range(self.PAGE_SIZE)])
             
@@ -528,18 +674,20 @@ class Device:
 
             if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
                 bytesRead += self.read_32bit_address_spi25_341(address, iPageSize, buffer)
+                # bytesRead += self.UsbAsp25_Read32bitAddr(0x03, address, buffer, iPageSize)
             else:
                 bytesRead += self.read_16bit_address_spi25_341(address, iPageSize, buffer);
             
             ms.write(buffer)
             address += iPageSize
 
+            print(zlib.crc32(buffer))
             del buffer
 
             
 
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
-            self.disable_4bit_mode()
+            self.UsbAsp25_EX4B()
 
         result = ms.getvalue()
         ms.close()
@@ -578,7 +726,7 @@ class Device:
         if (self.CHIP_SIZE > FLASH_SIZE_128BIT):
             self.enable_4bit_mode()
 
-        print(f"Start writing {iDataSize-address} bytes from address {address}")
+        print(f"Start writing {iDataSize - address} bytes from address {address}")
 
         while (address < iDataSize):
             
@@ -659,8 +807,7 @@ class Device:
         print(self.byte_to_hex_string(buffer[0:10]), self.byte_to_hex_string(buffer[-10:]), zlib.crc32(buffer))
 
 
-
-    def open(self, i_index, speed=SPEED_HIGH, spi_io=SPI_IO_SINGLE, spi_bit_order=SPI_BIT_ORDER_BIG):
+    def open(self, i_index, spi_io=SPI_IO_SINGLE, spi_bit_order=SPI_BIT_ORDER_BIG):
 
         print("="*35)
         print(f"Chip size :", self.CHIP_SIZE, f"{int(self.CHIP_SIZE/1024/1024)}MBit")
@@ -668,34 +815,47 @@ class Device:
         print(f"Page size :", self.PAGE_SIZE, f"({self.PAGE_DATA_SIZE} + {self.PAGE_OOB_SIZE})")
         print("-"*35)
 
-        if CH341DLL.CH341OpenDevice(c_uint(i_index)) > 0:
+        if CH341DLL.CH341OpenDevice(i_index) != 0xFFFFFFFF:
 
-            if not CH341DLL.CH341SetExclusive(c_uint(i_index), c_uint(1)):
+            self.dev_open = True
+            self.dev_index = i_index
+
+            if not CH341DLL.CH341SetExclusive(c_uint(i_index), c_uint(0)): #0=shared 1=exclusive
                 raise RuntimeError("CH341SetExclusive")
 
             CH341ChipVer = CH341DLL.CH341GetVerIC(c_uint(i_index))
+            print(f"Chip Version: {CH341ChipVer}")
+
             CH341SPIBit = False
 
             if CH341ChipVer >= 48:
                 CH341SPIBit = True
 
-                CH341.setStream(i_index, 129)
-                CH341.setD5D0(i_index, 63, 0)
-                CH341.setDelaymS(i_index, 4)
+                self.spi_init()
+
+                # CH341.setDelaymS(i_index, 4)
 
                 # ptr = CH341DLL.CH341GetDeviceName(c_ulong(i_index))
                 # device_name = cast(ptr, c_char_p).value
                 # print("Dev Name: ", device_name.decode('utf-8'))
+                #
+                
+
 
                 print(f"DLL Version: {CH341DLL.CH341GetVersion()}")
                 print(f"Driver Version: {CH341DLL.CH341GetDrvVersion()}")
-                self.read_spi_chip_id_341()
+                print(f"Is locked: {self.IsLockBitsEnabled()}")
+                time.sleep(0.1)
+
+                self.UsbAsp25_ReadID(self.ID)
+                print(self.ID)
+
 
                 t_start = time.time_ns()
-                self.read_page(0, 10, None, False)
+                self.read_page(0, 3, None, False)
                 t_end = time.time_ns()
                 elapsed_time_ns = t_end - t_start
-                self.page_time_ms = (elapsed_time_ns / 1e6)/10
+                self.page_time_ms = (elapsed_time_ns / 1e6)/3
                 print(f"Page time: {self.page_time_ms:.1f} ms")
 
                 print("-"*35)
@@ -725,15 +885,16 @@ class Device:
         
 device = Device(BLOCKS_COUNT=1024)
 device.open(0, spi_io=SPI_IO_DOUBLE)
-
-MemSize = 134217728
+# time.sleep(1)
+# print(device.UsbAsp25_Busy())
+# MemSize = 134217728
 
 # device.start_spi_mode_25()
 # device.read_spi_chip_id_341()
 # device.unlock_spi_chip_25()
 
 
-device.read_flash_bytes()
+# device.read_flash_bytes()
 
 # device.write_page(0, 'out.bin')
 # device.read_page(0, 2, None)
@@ -748,3 +909,4 @@ device.read_flash_bytes()
 # data = device.read_page(0, 1, None)
 # print(data, len(data))
 device.close()
+
